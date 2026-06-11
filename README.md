@@ -1,8 +1,10 @@
 # Telegram Sync Action for Obsidian Vault
 
-This repository contains a self-contained GitHub Actions workflow and a Python script designed to sync messages and media from a Telegram Bot directly into your GitHub-backed Obsidian vault. 
+This is a reusable GitHub Action designed to sync messages and media from a Telegram Bot directly into a Git-backed Obsidian vault. 
 
-Since GitHub Actions runs continuously on a cron schedule, it polls the Telegram Bot API in the background. This solves the **24-hour limit** where messages are lost if Obsidian is not opened within 24 hours of receiving them.
+Since GitHub Actions runs continuously on a cron schedule, it polls the Telegram Bot API in the background. This solves the **24-hour limit** where messages are lost if Obsidian is not opened within 24 hours of sending them.
+
+By deploying this repository to GitHub, you and anyone else can use it directly in a workflow without copying any Python scripts or code!
 
 ---
 
@@ -10,35 +12,64 @@ Since GitHub Actions runs continuously on a cron schedule, it polls the Telegram
 
 ```text
 .
-├── .github
-│   ├── scripts
-│   │   └── telegram_sync.py      # Main Python polling and parsing script
-│   └── workflows
-│       └── telegram-sync.yml     # GitHub Actions workflow configuration
-└── README.md                     # Setup and usage instructions
+├── scripts
+│   └── telegram_sync.py      # Main Python polling and parsing script
+├── action.yml                # Custom Composite Action configuration
+└── README.md                 # Setup and usage instructions
 ```
 
 ---
 
-## How it Works
+## How to Use This Action in a Vault Repository
 
-1. **Scheduled Polling**: Every 30 minutes, the GitHub Actions runner wakes up and runs `telegram_sync.py`.
-2. **Retrieve Updates**: The script queries the Telegram Bot API `getUpdates` using your bot's secret token.
-3. **State Preservation**: To avoid processing messages twice, a state file called `.github/telegram_sync_state.json` is maintained in the repository, keeping track of the last processed `update_id`.
-4. **Rich Content Rendering**:
-   - **Text & Captions**: Formatting (bold, italics, strike-through, code, text-links) is parsed and translated to standard Markdown.
-   - **Media & Attachments**: Images, documents, voice notes, audios, and videos are automatically downloaded, saved to your attachments folder, and linked using Obsidian's native wiki-link syntax (`![[filename]]` or `[[filename]]`).
-5. **Git Push**: If new messages or media are retrieved, the runner commits the changes and pushes them directly back to your repository. When you sync your Obsidian vault with GitHub on your devices, the new notes and attachments are instantly loaded.
+### Step 1: Create a Workflow File
+In your GitHub-backed Obsidian vault repository, create a file named `.github/workflows/telegram-sync.yml` and add the following content (replace `your-username/telegram-sync-action` with your actual repository name):
 
----
+```yaml
+name: Telegram Sync to Vault
 
-## Setup Instructions
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
 
-### Step 1: Add files to your Obsidian Vault Repository
-Simply copy the `.github` folder from this repository into the root directory of your GitHub-backed Obsidian vault repository.
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Vault
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history so push works cleanly
+
+      - name: Run Telegram Sync Action
+        uses: your-username/telegram-sync-action@main
+        with:
+          telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          allowed_chats: ${{ secrets.ALLOWED_CHATS }}
+          note_path_template: 'Telegram/{{messageDate:YYYY-MM-DD}}.md'
+          file_path_template: 'Telegram/Attachments/{{file:name}}.{{file:extension}}'
+          timezone_offset: '5.5' # Adjust to your timezone offset (e.g. 5.5 is GMT+5:30)
+
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Check if there are changes to commit (new notes, attachments, or state json)
+          if [ -n "$(git status --porcelain)" ]; then
+            git add .
+            git commit -m "sync: pull new messages and attachments from Telegram"
+            git push
+          else
+            echo "No new messages to sync."
+          fi
+```
 
 ### Step 2: Set up Secrets in GitHub
-In your GitHub vault repository:
+In your Obsidian vault's GitHub repository:
 1. Go to **Settings** -> **Secrets and variables** -> **Actions**.
 2. Click **New repository secret**.
 3. Create the following secrets:
@@ -54,25 +85,25 @@ For security reasons, GitHub workflows have read-only permissions by default. Yo
 
 ---
 
-## Configuration Settings
+## Action Inputs Configuration
 
-You can customize how the synchronization behaves by editing the `env` block in `.github/workflows/telegram-sync.yml`:
+You can customize how the synchronization behaves by changing the `with` parameters in your workflow:
 
-| Environment Variable | Description | Default Value |
+| Input Parameter | Description | Default Value |
 | :--- | :--- | :--- |
-| `NOTES_DIR` | The vault folder where notes are stored. | `Telegram` |
-| `ATTACHMENTS_DIR`| The vault folder where images/files are saved. | `Telegram/Attachments` |
-| `NOTE_FORMAT` | `daily` to group notes by day (`YYYY-MM-DD.md`) or `single` to append everything to `Inbox.md`. | `daily` |
-| `TIMEZONE_OFFSET` | Your local timezone offset in decimal hours (e.g., `5.5` for GMT+5:30, `-8` for GMT-8). | `5.5` |
+| `telegram_bot_token`| **Required**. The Telegram bot token from BotFather. | N/A |
+| `allowed_chats` | Comma-separated list of allowed user names or chat IDs. | `''` (allows all) |
+| `note_path_template`| Obsidian note path template with variable support. | `'Telegram/{{messageDate:YYYY-MM-DD}}.md'` |
+| `file_path_template`| Attachment file path template with variable support. | `'Telegram/Attachments/{{file:name}}.{{file:extension}}'` |
+| `timezone_offset` | Your local timezone offset in decimal hours (e.g., `5.5` for GMT+5:30). | `'0'` |
 
 ---
 
-## Formatting Syntax
+## Path Variables
 
-The script converts Telegram message types as follows:
+The action parses and replaces the following variables inside the path templates:
 
-* **Daily Note Header**: Appends `### HH:MM:SS - Sender` above each entry.
-* **Single Note Header**: Appends `## YYYY-MM-DD HH:MM:SS - Sender (in ChatName)`.
-* **Images, Voice Notes, Video & Audio**: Linked as embeds (`![[attachment.ext]]`).
-* **Documents / PDFs**: Linked as inline links (`[[document.ext]]`).
-* **Formatted Text**: Handles bold (`**bold**`), italic (`*italic*`), underline (`<u>underline</u>`), strikethrough (`~~strikethrough~~`), code (```code```), and hyperlinks.
+* **Date & Time**: `{{messageDate:FORMAT}}`, `{{messageTime:FORMAT}}`, `{{date:FORMAT}}`, `{{time:FORMAT}}` (e.g., `YYYY-MM-DD` formats).
+* **Sender Info**: `{{user:name}}`, `{{user:fullName}}`, `{{userId}}`.
+* **Chat Info**: `{{chat:name}}`, `{{chatId}}`, `{{messageId}}`.
+* **Attachment Info**: `{{file:type}}` (e.g., photo, voice, document), `{{file:name}}` (sanitized original file name), `{{file:extension}}`.

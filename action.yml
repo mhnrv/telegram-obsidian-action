@@ -1,0 +1,45 @@
+name: 'Telegram Sync for Obsidian'
+description: 'Sync Telegram messages and attachments directly into your git-backed Obsidian vault.'
+author: 'soberhacker'
+branding:
+  icon: 'message-square'
+  color: 'purple'
+
+inputs:
+  telegram_bot_token:
+    description: 'The Telegram bot token from BotFather'
+    required: true
+  allowed_chats:
+    description: 'Comma-separated list of allowed user names or chat IDs'
+    required: false
+    default: ''
+  note_path_template:
+    description: 'Obsidian note path template'
+    required: false
+    default: 'Telegram/{{messageDate:YYYY-MM-DD}}.md'
+  file_path_template:
+    description: 'Attachment file path template'
+    required: false
+    default: 'Telegram/Attachments/{{file:name}}.{{file:extension}}'
+  timezone_offset:
+    description: 'Your local timezone offset in decimal hours (e.g. 5.5)'
+    required: false
+    default: '0'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Run Sync Script
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ inputs.telegram_bot_token }}
+        ALLOWED_CHATS: ${{ inputs.allowed_chats }}
+        NOTE_PATH_TEMPLATE: ${{ inputs.note_path_template }}
+        FILE_PATH_TEMPLATE: ${{ inputs.file_path_template }}
+        TIMEZONE_OFFSET: ${{ inputs.timezone_offset }}
+      shell: bash
+      run: python ${{ github.action_path }}/scripts/telegram_sync.py
