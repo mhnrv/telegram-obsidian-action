@@ -377,9 +377,6 @@ def process_message(msg):
     file_exists = os.path.exists(note_path)
     
     with open(note_path, "a", encoding="utf-8") as f:
-        if not file_exists:
-            title = os.path.splitext(os.path.basename(note_path))[0]
-            f.write(f"# {title}\n\n")
         f.write(entry_content + "\n\n---\n\n")
         
     print(f"Successfully processed message to {note_path}")
