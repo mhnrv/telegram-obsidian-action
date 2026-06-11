@@ -97,6 +97,7 @@ You can customize how the synchronization behaves by changing the `with` paramet
 | `file_path_template`| Attachment file path template with variable support. | `'Telegram/Attachments/{{file:name}}.{{file:extension}}'` |
 | `timezone_offset` | Your local timezone offset in decimal hours (e.g., `5.5` for GMT+5:30). | `'0'` |
 | `message_template` | The template for formatting each message inside the note. | See default below |
+| `note_header_template`| The template for the header written at the top of a new note file. | `''` (no header) |
 
 *Default `message_template`:*
 ```text

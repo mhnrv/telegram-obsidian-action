@@ -15,6 +15,7 @@ ALLOWED_CHATS = [x.strip() for x in os.environ.get("ALLOWED_CHATS", "").split(",
 NOTE_PATH_TEMPLATE = os.environ.get("NOTE_PATH_TEMPLATE", "Telegram/{{messageDate:YYYY-MM-DD}}.md")
 FILE_PATH_TEMPLATE = os.environ.get("FILE_PATH_TEMPLATE", "Telegram/Attachments/{{file:name}}.{{file:extension}}")
 MESSAGE_TEMPLATE = os.environ.get("MESSAGE_TEMPLATE", "### {{messageTime:HH:mm:ss}} - {{user:name}} (in {{chat:name}})\n{{files}}\n\n{{content}}")
+NOTE_HEADER_TEMPLATE = os.environ.get("NOTE_HEADER_TEMPLATE", "")
 
 TZ_OFFSET = float(os.environ.get("TIMEZONE_OFFSET", "0"))
 STATE_FILE = ".github/telegram_sync_state.json"
@@ -377,6 +378,9 @@ def process_message(msg):
     file_exists = os.path.exists(note_path)
     
     with open(note_path, "a", encoding="utf-8") as f:
+        if not file_exists and NOTE_HEADER_TEMPLATE:
+            header = process_variables(NOTE_HEADER_TEMPLATE, msg)
+            f.write(header + "\n\n")
         f.write(entry_content + "\n\n---\n\n")
         
     print(f"Successfully processed message to {note_path}")
