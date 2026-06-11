@@ -59,6 +59,20 @@ def download_file(file_id, dest_path):
         return True
     return False
 
+def set_reaction(chat_id, message_id, emoji):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction"
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "reaction": [{"type": "emoji", "emoji": emoji}]
+    }
+    try:
+        make_request(url, data)
+        return True
+    except Exception as e:
+        print(f"Failed to set message reaction: {e}")
+        return False
+
 def is_chat_allowed(chat):
     if not ALLOWED_CHATS:
         return True
@@ -317,6 +331,16 @@ def process_message(msg):
         f.write(entry_content + "\n\n---\n\n")
         
     print(f"Successfully processed message to {note_path}")
+    
+    # React to the message to indicate it has been processed
+    chat_id = chat.get("id")
+    message_id = msg.get("message_id")
+    if chat_id and message_id:
+        emoji = "👍"
+        if "edit_date" in msg:
+            emoji = "✍"
+        set_reaction(chat_id, message_id, emoji)
+        
     return True
 
 def main():
