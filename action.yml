@@ -25,6 +25,10 @@ inputs:
     description: 'Your local timezone offset in decimal hours (e.g. 5.5)'
     required: false
     default: '0'
+  message_template:
+    description: 'The template for formatting each message inside the note'
+    required: false
+    default: "### {{messageTime:HH:mm:ss}} - {{user:name}} (in {{chat:name}})\n{{files}}\n\n{{content}}"
 
 runs:
   using: "composite"
@@ -41,5 +45,6 @@ runs:
         NOTE_PATH_TEMPLATE: ${{ inputs.note_path_template }}
         FILE_PATH_TEMPLATE: ${{ inputs.file_path_template }}
         TIMEZONE_OFFSET: ${{ inputs.timezone_offset }}
+        MESSAGE_TEMPLATE: ${{ inputs.message_template }}
       shell: bash
       run: python ${{ github.action_path }}/scripts/telegram_sync.py

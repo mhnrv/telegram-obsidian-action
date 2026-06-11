@@ -14,6 +14,7 @@ ALLOWED_CHATS = [x.strip() for x in os.environ.get("ALLOWED_CHATS", "").split(",
 # Path template configurations (matching Obsidian plugin style)
 NOTE_PATH_TEMPLATE = os.environ.get("NOTE_PATH_TEMPLATE", "Telegram/{{messageDate:YYYY-MM-DD}}.md")
 FILE_PATH_TEMPLATE = os.environ.get("FILE_PATH_TEMPLATE", "Telegram/Attachments/{{file:name}}.{{file:extension}}")
+MESSAGE_TEMPLATE = os.environ.get("MESSAGE_TEMPLATE", "### {{messageTime:HH:mm:ss}} - {{user:name}} (in {{chat:name}})\n{{files}}\n\n{{content}}")
 
 TZ_OFFSET = float(os.environ.get("TIMEZONE_OFFSET", "0"))
 STATE_FILE = ".github/telegram_sync_state.json"
@@ -90,19 +91,70 @@ def get_local_time(unix_time):
     dt_local = dt_utc + timedelta(hours=TZ_OFFSET)
     return dt_local
 
-def convert_format_string(format_str):
-    mapping = {
-        "YYYY": "%Y",
-        "YY": "%y",
-        "MM": "%m",
-        "DD": "%d",
-        "HH": "%H",
-        "mm": "%M",
-        "ss": "%S"
-    }
-    for k, v in mapping.items():
-        format_str = format_str.replace(k, v)
-    return format_str
+def format_dt(dt, moment_fmt):
+    res = moment_fmt
+    
+    # Hour 24
+    if "HH" in res:
+        res = res.replace("HH", dt.strftime("%H"))
+    elif "H" in res:
+        res = res.replace("H", str(dt.hour))
+        
+    # Hour 12
+    if "hh" in res:
+        res = res.replace("hh", dt.strftime("%I"))
+    elif "h" in res:
+        res = res.replace("h", str(int(dt.strftime("%I"))))
+        
+    # Minutes
+    if "mm" in res:
+        res = res.replace("mm", dt.strftime("%M"))
+    elif "m" in res:
+        res = res.replace("m", str(dt.minute))
+        
+    # Seconds
+    if "ss" in res:
+        res = res.replace("ss", dt.strftime("%S"))
+    elif "s" in res:
+        res = res.replace("s", str(dt.second))
+        
+    # Year
+    if "YYYY" in res:
+        res = res.replace("YYYY", dt.strftime("%Y"))
+    elif "YY" in res:
+        res = res.replace("YY", dt.strftime("%y"))
+        
+    # Month
+    if "MM" in res:
+        res = res.replace("MM", dt.strftime("%m"))
+        
+    # Day
+    if "DD" in res:
+        res = res.replace("DD", dt.strftime("%d"))
+        
+    # AM/PM
+    if "a" in res:
+        res = res.replace("a", dt.strftime("%p").lower())
+    if "A" in res:
+        res = res.replace("A", dt.strftime("%p").upper())
+        
+    # Timezone offset representation
+    if "zz" in res:
+        sign = "+" if TZ_OFFSET >= 0 else "-"
+        abs_offset = abs(TZ_OFFSET)
+        hours = int(abs_offset)
+        minutes = int((abs_offset - hours) * 60)
+        tz_str = f"GMT{sign}{hours:02d}:{minutes:02d}"
+        res = res.replace("zz", tz_str)
+    elif "z" in res:
+        sign = "+" if TZ_OFFSET >= 0 else "-"
+        abs_offset = abs(TZ_OFFSET)
+        hours = int(abs_offset)
+        minutes = int((abs_offset - hours) * 60)
+        tz_str = f"GMT{sign}{hours:02d}:{minutes:02d}"
+        res = res.replace("z", tz_str)
+        
+    return res
 
 def sanitize_filename(name):
     # Keep alphanumeric characters, spaces, dashes, dots, and underscores
@@ -114,12 +166,12 @@ def process_variables(template, msg, file_info=None):
     
     def repl_message_date(match):
         fmt = match.group(1)
-        return dt.strftime(convert_format_string(fmt))
+        return format_dt(dt, fmt)
         
     def repl_date(match):
         now_dt = datetime.now(timezone.utc) + timedelta(hours=TZ_OFFSET)
         fmt = match.group(1)
-        return now_dt.strftime(convert_format_string(fmt))
+        return format_dt(now_dt, fmt)
 
     template = re.sub(r"{{messageDate:(.*?)}}", repl_message_date, template)
     template = re.sub(r"{{messageTime:(.*?)}}", repl_message_date, template)
@@ -303,22 +355,22 @@ def process_message(msg):
         video = msg["video"]
         process_attachment(video["file_id"], "video", video.get("file_name", "video.mp4"), "mp4", True)
 
-    # Format entries
-    entry_lines = []
+    # Format entries using MESSAGE_TEMPLATE
+    embeds = "\n".join(f"![[{f}]]" for f, is_embed in attachments if is_embed)
+    links = "\n".join(f"[[{f}]]" for f, _ in attachments)
     
-    # Message header
-    entry_lines.append(f"### {time_str} - {sender} (in {chat_name})")
-        
-    for filename, is_embed in attachments:
-        if is_embed:
-            entry_lines.append(f"![[{filename}]]")
-        else:
-            entry_lines.append(f"[[{filename}]]")
-            
-    if formatted_text:
-        entry_lines.append(formatted_text)
-        
-    entry_content = "\n\n".join(entry_lines)
+    entry_content = MESSAGE_TEMPLATE
+    entry_content = entry_content.replace("{{files}}", embeds)
+    entry_content = entry_content.replace("{{files:links}}", links)
+    entry_content = entry_content.replace("{{content:text}}", formatted_text)
+    entry_content = entry_content.replace("{{content}}", formatted_text)
+    
+    # Process date/time/user/chat variables
+    entry_content = process_variables(entry_content, msg)
+    
+    # Clean up excess consecutive newlines that can result from empty values (e.g. no attachments)
+    entry_content = entry_content.strip()
+    entry_content = re.sub(r'\n{3,}', '\n\n', entry_content)
     
     # Save/Append to the note file
     os.makedirs(os.path.dirname(note_path), exist_ok=True)
