@@ -338,7 +338,7 @@ def process_message(msg):
     if chat_id and message_id:
         emoji = "👍"
         if "edit_date" in msg:
-            emoji = "✍"
+            emoji = "🦄"
         set_reaction(chat_id, message_id, emoji)
         
     return True
