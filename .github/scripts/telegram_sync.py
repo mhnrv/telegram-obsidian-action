@@ -2,6 +2,7 @@
 import os
 import sys
 import json
+import re
 import urllib.request
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -9,11 +10,12 @@ from datetime import datetime, timedelta, timezone
 # Load config from environment variables
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 ALLOWED_CHATS = [x.strip() for x in os.environ.get("ALLOWED_CHATS", "").split(",") if x.strip()]
-NOTES_DIR = os.environ.get("NOTES_DIR", "Telegram")
-ATTACHMENTS_DIR = os.environ.get("ATTACHMENTS_DIR", "Telegram/Attachments")
-NOTE_FORMAT = os.environ.get("NOTE_FORMAT", "daily") # "daily" or "single"
-TZ_OFFSET = float(os.environ.get("TIMEZONE_OFFSET", "0"))
 
+# Path template configurations (matching Obsidian plugin style)
+NOTE_PATH_TEMPLATE = os.environ.get("NOTE_PATH_TEMPLATE", "Telegram/{{messageDate:YYYY-MM-DD}}.md")
+FILE_PATH_TEMPLATE = os.environ.get("FILE_PATH_TEMPLATE", "Telegram/Attachments/{{file:name}}.{{file:extension}}")
+
+TZ_OFFSET = float(os.environ.get("TIMEZONE_OFFSET", "0"))
 STATE_FILE = ".github/telegram_sync_state.json"
 
 if not BOT_TOKEN:
@@ -59,7 +61,7 @@ def download_file(file_id, dest_path):
 
 def is_chat_allowed(chat):
     if not ALLOWED_CHATS:
-        return True  # If empty, default to allowing all chats
+        return True
     chat_id = str(chat.get("id"))
     username = chat.get("username", "")
     for allowed in ALLOWED_CHATS:
@@ -74,12 +76,83 @@ def get_local_time(unix_time):
     dt_local = dt_utc + timedelta(hours=TZ_OFFSET)
     return dt_local
 
+def convert_format_string(format_str):
+    mapping = {
+        "YYYY": "%Y",
+        "YY": "%y",
+        "MM": "%m",
+        "DD": "%d",
+        "HH": "%H",
+        "mm": "%M",
+        "ss": "%S"
+    }
+    for k, v in mapping.items():
+        format_str = format_str.replace(k, v)
+    return format_str
+
+def sanitize_filename(name):
+    # Keep alphanumeric characters, spaces, dashes, dots, and underscores
+    return "".join(c for c in name if c.isalnum() or c in " .-_()").strip()
+
+def process_variables(template, msg, file_info=None):
+    date_val = msg.get("date")
+    dt = get_local_time(date_val) if date_val else datetime.now()
+    
+    def repl_message_date(match):
+        fmt = match.group(1)
+        return dt.strftime(convert_format_string(fmt))
+        
+    def repl_date(match):
+        now_dt = datetime.now(timezone.utc) + timedelta(hours=TZ_OFFSET)
+        fmt = match.group(1)
+        return now_dt.strftime(convert_format_string(fmt))
+
+    template = re.sub(r"{{messageDate:(.*?)}}", repl_message_date, template)
+    template = re.sub(r"{{messageTime:(.*?)}}", repl_message_date, template)
+    template = re.sub(r"{{date:(.*?)}}", repl_date, template)
+    template = re.sub(r"{{time:(.*?)}}", repl_date, template)
+    
+    from_user = msg.get("from", {})
+    username = from_user.get("username", "")
+    first_name = from_user.get("first_name", "")
+    last_name = from_user.get("last_name", "")
+    full_name = f"{first_name} {last_name}".strip()
+    
+    chat = msg.get("chat", {})
+    chat_name = chat.get("title") or chat.get("username") or "Private Chat"
+    chat_id = str(chat.get("id", ""))
+    
+    template = template.replace("{{user:name}}", sanitize_filename(username or "unknown"))
+    template = template.replace("{{user:fullName}}", sanitize_filename(full_name or "unknown"))
+    template = template.replace("{{userId}}", chat_id)
+    template = template.replace("{{chat:name}}", sanitize_filename(chat_name))
+    template = template.replace("{{chatId}}", chat_id)
+    template = template.replace("{{messageId}}", str(msg.get("message_id", "")))
+    
+    if file_info:
+        template = template.replace("{{file:type}}", file_info.get("type", ""))
+        template = template.replace("{{file:name}}", sanitize_filename(file_info.get("name", "")))
+        template = template.replace("{{file:extension}}", file_info.get("extension", ""))
+        
+    return template
+
+def get_unique_path(path):
+    if not os.path.exists(path):
+        return path
+    dir_name, file_name = os.path.split(path)
+    base_name, ext = os.path.splitext(file_name)
+    counter = 1
+    while True:
+        new_name = f"{base_name}_{counter}{ext}"
+        new_path = os.path.join(dir_name, new_name)
+        if not os.path.exists(new_path):
+            return new_path
+        counter += 1
+
 def convert_entities_to_markdown(text, entities):
     if not entities or not text:
         return text
     
-    # Sort entities in reverse order of offset to process from the end of the text.
-    # This prevents character insertions from invalidating offsets of subsequent entities.
     sorted_entities = sorted(entities, key=lambda e: e.get('offset', 0), reverse=True)
     
     for entity in sorted_entities:
@@ -114,9 +187,6 @@ def convert_entities_to_markdown(text, entities):
         
     return text
 
-def sanitize_filename(name):
-    return "".join(c for c in name if c.isalnum() or c in " .-_()").strip()
-
 def process_message(msg):
     date_val = msg.get("date")
     if not date_val:
@@ -124,14 +194,11 @@ def process_message(msg):
     
     dt = get_local_time(date_val)
     time_str = dt.strftime("%H:%M:%S")
-    date_str = dt.strftime("%Y-%m-%d")
     
-    # Determine note path
-    if NOTE_FORMAT == "daily":
-        note_name = f"{date_str}.md"
-        note_path = os.path.join(NOTES_DIR, note_name)
-    else:
-        note_path = os.path.join(NOTES_DIR, "Inbox.md")
+    # Resolve note path using variables
+    note_path = process_variables(NOTE_PATH_TEMPLATE, msg)
+    if not note_path.endswith(".md"):
+        note_path += ".md"
         
     # Get sender info
     from_user = msg.get("from", {})
@@ -164,78 +231,71 @@ def process_message(msg):
     # Process attachments
     attachments = []
     
+    def process_attachment(file_id, file_type, orig_name, default_ext, is_embed):
+        safe_time = dt.strftime("%Y%m%d_%H%M%S")
+        base_name, ext = os.path.splitext(orig_name) if orig_name else (f"{safe_time}_{file_type}", default_ext)
+        if not ext:
+            ext = default_ext
+        if ext.startswith("."):
+            ext = ext[1:]
+            
+        file_info = {
+            "type": file_type,
+            "name": base_name,
+            "extension": ext
+        }
+        
+        # Resolve attachment path using variables
+        raw_dest_path = process_variables(FILE_PATH_TEMPLATE, msg, file_info)
+        # Ensure it has the correct extension if template didn't specify it
+        if not raw_dest_path.endswith(f".{ext}"):
+            _, raw_ext = os.path.splitext(raw_dest_path)
+            if not raw_ext:
+                raw_dest_path += f".{ext}"
+                
+        dest_path = get_unique_path(raw_dest_path)
+        print(f"Downloading {file_type} to {dest_path}...")
+        
+        if download_file(file_id, dest_path):
+            filename_for_link = os.path.basename(dest_path)
+            attachments.append((filename_for_link, is_embed))
+
     # Photos
     if "photo" in msg:
         photo_sizes = msg["photo"]
         if photo_sizes:
             largest = photo_sizes[-1]
-            file_id = largest["file_id"]
-            safe_time = dt.strftime("%Y%m%d_%H%M%S")
-            filename = f"{safe_time}_photo.jpg"
-            dest = os.path.join(ATTACHMENTS_DIR, filename)
-            print(f"Downloading photo to {dest}...")
-            if download_file(file_id, dest):
-                attachments.append((filename, True))
+            process_attachment(largest["file_id"], "photo", "", "jpg", True)
                 
     # Documents
     elif "document" in msg:
         doc = msg["document"]
-        file_id = doc["file_id"]
-        orig_name = sanitize_filename(doc.get("file_name", "document"))
-        safe_time = dt.strftime("%Y%m%d_%H%M%S")
-        filename = f"{safe_time}_{orig_name}"
-        dest = os.path.join(ATTACHMENTS_DIR, filename)
-        print(f"Downloading document to {dest}...")
-        if download_file(file_id, dest):
-            mime = doc.get("mime_type", "")
-            is_embed = mime.startswith("image/") or mime.startswith("audio/") or mime.startswith("video/")
-            attachments.append((filename, is_embed))
+        mime = doc.get("mime_type", "")
+        is_embed = mime.startswith("image/") or mime.startswith("audio/") or mime.startswith("video/")
+        process_attachment(doc["file_id"], "document", doc.get("file_name", "document"), "bin", is_embed)
             
     # Voice notes
     elif "voice" in msg:
         voice = msg["voice"]
-        file_id = voice["file_id"]
-        safe_time = dt.strftime("%Y%m%d_%H%M%S")
-        filename = f"{safe_time}_voice.ogg"
-        dest = os.path.join(ATTACHMENTS_DIR, filename)
-        print(f"Downloading voice note to {dest}...")
-        if download_file(file_id, dest):
-            attachments.append((filename, True))
+        process_attachment(voice["file_id"], "voice", "", "ogg", True)
             
     # Audio
     elif "audio" in msg:
         audio = msg["audio"]
-        file_id = audio["file_id"]
-        orig_name = sanitize_filename(audio.get("file_name", "audio.mp3"))
-        safe_time = dt.strftime("%Y%m%d_%H%M%S")
-        filename = f"{safe_time}_{orig_name}"
-        dest = os.path.join(ATTACHMENTS_DIR, filename)
-        print(f"Downloading audio to {dest}...")
-        if download_file(file_id, dest):
-            attachments.append((filename, True))
+        process_attachment(audio["file_id"], "audio", audio.get("file_name", "audio.mp3"), "mp3", True)
             
     # Video
     elif "video" in msg:
         video = msg["video"]
-        file_id = video["file_id"]
-        orig_name = sanitize_filename(video.get("file_name", "video.mp4"))
-        safe_time = dt.strftime("%Y%m%d_%H%M%S")
-        filename = f"{safe_time}_{orig_name}"
-        dest = os.path.join(ATTACHMENTS_DIR, filename)
-        print(f"Downloading video to {dest}...")
-        if download_file(file_id, dest):
-            attachments.append((filename, True))
+        process_attachment(video["file_id"], "video", video.get("file_name", "video.mp4"), "mp4", True)
 
     # Format entries
     entry_lines = []
     
-    if NOTE_FORMAT == "daily":
-        entry_lines.append(f"### {time_str} - {sender}")
-    else:
-        entry_lines.append(f"## {date_str} {time_str} - {sender} (in {chat_name})")
+    # Message header
+    entry_lines.append(f"### {time_str} - {sender} (in {chat_name})")
         
     for filename, is_embed in attachments:
-        # Use Obsidian attachment relative format or standard wiki link
         if is_embed:
             entry_lines.append(f"![[{filename}]]")
         else:
@@ -296,7 +356,7 @@ def main():
                 import traceback
                 traceback.print_exc()
                 
-    # Save the updated offset state back
+    # Save state
     if max_update_id is not None:
         os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
         with open(STATE_FILE, "w") as f:

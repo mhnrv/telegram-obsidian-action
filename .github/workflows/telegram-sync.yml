@@ -25,9 +25,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
-          NOTES_DIR: 'Telegram'
-          ATTACHMENTS_DIR: 'Telegram/Attachments'
-          NOTE_FORMAT: 'daily' # 'daily' or 'single'
+          NOTE_PATH_TEMPLATE: 'Telegram/{{messageDate:YYYY-MM-DD}}.md'
+          FILE_PATH_TEMPLATE: 'Telegram/Attachments/{{file:name}}.{{file:extension}}'
           TIMEZONE_OFFSET: '5.5' # Adjust to your timezone offset (e.g. 5.5 is GMT+5:30)
         run: python .github/scripts/telegram_sync.py
 
