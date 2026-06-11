@@ -23,7 +23,7 @@ By deploying this repository to GitHub, you and anyone else can use it directly 
 ## How to Use This Action in a Vault Repository
 
 ### Step 1: Create a Workflow File
-In your GitHub-backed Obsidian vault repository, create a file named `.github/workflows/telegram-sync.yml` and add the following content (replace `your-username/telegram-sync-action` with your actual repository name):
+In your GitHub-backed Obsidian vault repository, create a file named `.github/workflows/telegram-sync.yml` and add the following content:
 
 ```yaml
 name: Telegram Sync to Vault
@@ -45,7 +45,7 @@ jobs:
           fetch-depth: 0 # Fetch all history so push works cleanly
 
       - name: Run Telegram Sync Action
-        uses: your-username/telegram-sync-action@main
+        uses: mhnrv/telegram-obsidian-action@main
         with:
           telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           allowed_chats: ${{ secrets.ALLOWED_CHATS }}
@@ -118,7 +118,7 @@ AttachmentLinks
 You can configure your workflow step like this:
 ```yaml
       - name: Run Telegram Sync Action
-        uses: your-username/telegram-sync-action@main
+        uses: mhnrv/telegram-obsidian-action@main
         with:
           telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           allowed_chats: ${{ secrets.ALLOWED_CHATS }}
